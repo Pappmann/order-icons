@@ -1,0 +1,29 @@
+name: Build extension package
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install GNOME schema tools
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin
+
+      - name: Build extension zip
+        run: |
+          cd order-extensions@wa4557.github.com
+          glib-compile-schemas schemas
+          zip -r extension.zip extension.js metadata.json prefs.js schemas
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-icons-extension
+          path: order-extensions@wa4557.github.com/extension.zip
