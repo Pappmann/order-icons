@@ -41,9 +41,13 @@ export default class OrderIcons extends Extension {
     disable() {
         Panel.Panel.prototype._redrawIndicators = undefined;
         Panel.Panel.prototype._addToPanelBox = _origAddToPanelBox;
-        this.settingsIDs.forEach(id => settings.disconnect(id));
-        GLib.Source.remove(timeout_id);
-        timeout_id = null;
+        if (this.settingsIDs && settings) {
+            this.settingsIDs.forEach(id => settings.disconnect(id));
+        }
+        if (timeout_id !== null) {
+            GLib.Source.remove(timeout_id);
+            timeout_id = null;
+        }
         order_arr_left = null;
         order_arr_center = null;
         order_arr_right = null;
@@ -63,7 +67,10 @@ function _redrawIndicators() {
     for (const k in this.statusArea) {
         const role = k;
         const indicator = this.statusArea[k];
-        let box = indicator.get_parent().get_parent();
+        if (!indicator) continue;
+        let parent = indicator.get_parent();
+        if (!parent) continue;
+        let box = parent.get_parent();
         if (box == undefined) continue
         this._addToPanelBox(role, indicator, 0, box)
     }
@@ -81,33 +88,44 @@ function _addToPanelBox(role, indicator, position, box) {
     }
 
     this.statusArea[role] = indicator;
+    const statusArea = this.statusArea;
+    const menuManager = this.menuManager;
+    const onMenuSet = this._onMenuSet.bind(this);
+
     // not ideal, but due to recent changes in appindicator-extension we have to wait for the ID to become available
-    let in_blacklist = false;
     waitForId(indicator, role).then(() => {
-        let position_corr = getRelativePosition(indicator, role, box.name, this.statusArea);
+        let position_corr = getRelativePosition(indicator, role, box.name, statusArea);
         let testName = getTestName(indicator, role);
         if (blacklist_array.includes(testName)) {
-            in_blacklist = true;
+            delete statusArea[role];
+            return;
         }
-        else {
-            setSettingValues(testName, box);
-            box.insert_child_at_index(container, position_corr ? position_corr : position);
+
+        // Check if container or box have been disposed before inserting
+        try {
+            if (container && box && !container._disposed) {
+                // Verify the container and box are still valid actors
+                if (typeof container.get_parent === 'function' && typeof box.insert_child_at_index === 'function') {
+                    setSettingValues(testName, box);
+                    box.insert_child_at_index(container, position_corr ? position_corr : position);
+                }
+            }
+        } catch (e) {
+            // Container or box was disposed, skip insertion
+            console.log(`OrderExtensions: Skipping disposed actor for ${role}: ${e.message}`);
+            return;
         }
-    }).catch((error) => { console.log(error) })
-    if (in_blacklist) {
-        delete this.statusArea[role];
-    }
-    else {
+
         if (indicator.menu) {
-            this.menuManager.addMenu(indicator.menu);
+            menuManager.addMenu(indicator.menu);
         }
         const destroyId = indicator.connect('destroy', (emitter) => {
-            delete this.statusArea[role];
+            delete statusArea[role];
             emitter.disconnect(destroyId);
         });
-        indicator.connect('menu-set', this._onMenuSet.bind(this));
-        this._onMenuSet(indicator);
-    }
+        indicator.connect('menu-set', onMenuSet);
+        onMenuSet(indicator);
+    }).catch((error) => { console.log(`OrderExtensions error: ${error}`) });
 }
 
 
@@ -157,8 +175,13 @@ function getRelativePosition(indicator, role, boxName, statusArea) {
     let ctr = 0
     for (const k in statusArea) {
         if (k == role) continue
-        if (statusArea[k].get_parent().get_parent() != null && boxName === statusArea[k].get_parent().get_parent().get_name()) {
-            const toTest = getTestName(statusArea[k], k);
+        const item = statusArea[k];
+        if (!item) continue;
+        const itemParent = item.get_parent();
+        if (!itemParent) continue;
+        const itemBox = itemParent.get_parent();
+        if (itemBox != null && boxName === itemBox.get_name()) {
+            const toTest = getTestName(item, k);
             let setPosition = getSettingsPosition(toTest, order_arr);
             if (setPosition == null) {
                 setPosition = 0;
